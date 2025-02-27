@@ -1,0 +1,47 @@
+# Fichiers bytecode Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environnements virtuels
+venv/
+env/
+ENV/
+.env/
+.venv/
+
+# Sauvegardes de l'application
+.trieur_sauvegarde.json
+.trieur_fichiers_config.json
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers d'éditeurs et IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+.spyderproject
+.spyproject
+
+# Fichiers de logs
+*.log
+
+# Dossiers de cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Fichiers de documentation générés
+docs/_build/
