@@ -1,4 +1,4 @@
-# Trieur de Fichiers Automatique
+# Trieur de Fichiers Automatique - Version 1.0
 
 ![Capture d'écran de l'application](screenshots/screenshots_sombre_clair.png)
 
@@ -37,7 +37,7 @@ Une application Python avec interface graphique CustomTkinter permettant de trie
 1. Cloner le repository
    ```bash
    git clone https://github.com/Blowdok/trieur-fichiers-automatique.git
-   cd trieur-fichiers
+   cd trieur-fichiers-automatique
    ```
 
 2. Installer les dépendances
