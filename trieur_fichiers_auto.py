@@ -298,7 +298,7 @@ class ApplicationTrieurFichiers(ctk.CTk):
         super().__init__()
         
         # Configuration de la fenêtre
-        self.title("Trieur de Fichiers Automatique - V1.0 By BlowCoder ")
+        self.title("Trieur de Fichiers Automatique - V1.1 By BlowCoder ")
         self.geometry("1000x700")
         
         # Centrer la fenêtre
