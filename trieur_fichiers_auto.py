@@ -8,7 +8,7 @@ import customtkinter as ctk
 from typing import Dict, List, Tuple
 import threading
 
-# Dictionnaire des types de fichiers par extension
+# Dictionnaire des types de fichiers par extension (vous pouvez ajouter d'autres types si nécessaire)
 TYPES_FICHIERS = {
     "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".svg", ".ico"],
     "Vidéos": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"],
@@ -16,7 +16,8 @@ TYPES_FICHIERS = {
     "Audio": [".mp3", ".wav", ".ogg", ".flac", ".aac", ".wma", ".m4a"],
     "Archives": [".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2"],
     "Programmes": [".exe", ".msi", ".app", ".apk", ".bat", ".sh", ".dmg", ".deb", ".rpm"],
-    "Code": [".py", ".java", ".js", ".html", ".css", ".php", ".c", ".cpp", ".h", ".cs", ".json", ".xml"]
+    "Code": [".py", ".java", ".js", ".html", ".css", ".php", ".c", ".cpp", ".h", ".cs", ".json", ".xml"],
+    "Polices": [".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2", ".eot", ".svg", ".fon", ".pfb", ".pfa", ".dfont", ".bdf", ".pcf"]
 }
 
 # Catégories de taille de fichiers (en octets)
