@@ -47,8 +47,9 @@ Une application Python avec interface graphique CustomTkinter permettant de trie
 Ouvrir un terminal et copier la commande :
 
 ```bash
-git clone https://github.com/Blowdok/trieur-fichiers-automatique.git
-cd trieur-fichiers-automatique
+cd Desktop
+git clone https://github.com/Blowdok/TRIEUR_FICHIERS_AUTOMATIQUE.git
+cd TRIEUR_FICHIERS_AUTOMATIQUE
 ```
 
 2. Installer les dépendances
@@ -69,8 +70,9 @@ cd trieur-fichiers-automatique
 Ouvrir un terminal et copier la commande :
 
 ```bash
-git clone https://github.com/Blowdok/trieur-fichiers-automatique.git
-cd trieur-fichiers-automatique
+cd Desktop
+git clone https://github.com/Blowdok/TRIEUR_FICHIERS_AUTOMATIQUE.git
+cd TRIEUR_FICHIERS_AUTOMATIQUE
 ```
 
 2. Ouvrir le dossier exe
@@ -102,7 +104,7 @@ Profitez!
 ## 📁 Structure du projet
 
 ```
-Trieur-Fichiers-Automatique/
+TRIEUR_FICHIERS_AUTOMATIQUE/
 ├── trieur_fichiers_auto.py            # Script principal
 ├── requirements.txt                   # Dépendances du projet
 ├── README.md                          # Documentation
