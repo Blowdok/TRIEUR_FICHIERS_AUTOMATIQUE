@@ -45,6 +45,3 @@ htmlcov/
 
 # Fichiers de documentation générés
 docs/_build/
-
-# Fichiers .ico
-icone.ico
