@@ -300,6 +300,7 @@ class ApplicationTrieurFichiers(ctk.CTk):
         # Configuration de la fenêtre
         self.title("Trieur de Fichiers Automatique - V1.1 By BlowCoder ")
         self.geometry("1000x700")
+        self.iconbitmap(r"C:\Users\Shadow\Desktop\TRIEUR_FICHIERS_AUTOMATIQUE\icone.ico")
         
         # Centrer la fenêtre
         width = 1000
