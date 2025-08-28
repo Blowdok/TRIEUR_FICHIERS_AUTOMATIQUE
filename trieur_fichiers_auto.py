@@ -3,10 +3,13 @@ import shutil
 import json
 import datetime
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from typing import Dict, List, Tuple
 import threading
+import logging
+import stat
+import time
 
 # Dictionnaire des types de fichiers par extension (vous pouvez ajouter d'autres types si nécessaire)
 TYPES_FICHIERS = {
@@ -37,6 +40,29 @@ CONFIG_PAR_DEFAUT = {
     "sous_dossiers_par_extension": True
 }
 
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('trieur_fichiers.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class TrieurError(Exception):
+    """Exception personnalisée pour les erreurs du trieur"""
+    pass
+
+class PermissionError_Custom(TrieurError):
+    """Erreur de permissions"""
+    pass
+
+class EspaceDisqueError(TrieurError):
+    """Erreur d'espace disque insuffisant"""
+    pass
+
 
 class TrieurFichiers:
     """Classe principale pour la gestion du tri des fichiers"""
@@ -49,6 +75,154 @@ class TrieurFichiers:
         self.config = config or CONFIG_PAR_DEFAUT.copy()
         self.dossier_source = self.config.get("dossier_source", "")
         self.sauvegarde = {}  # Pour stocker les emplacements originaux des fichiers
+        self.operations_realisees = []  # Pour le rollback
+        logger.info(f"Initialisation du TrieurFichiers avec dossier: {self.dossier_source}")
+    
+    def verifier_permissions_fichier(self, chemin_fichier: str) -> bool:
+        """
+        Vérifie si on a les permissions pour lire et déplacer un fichier
+        :param chemin_fichier: Chemin du fichier à vérifier
+        :return: True si les permissions sont OK
+        """
+        try:
+            # Vérifier lecture
+            if not os.access(chemin_fichier, os.R_OK):
+                raise PermissionError_Custom(f"Pas de permission de lecture sur {chemin_fichier}")
+            
+            # Vérifier si le fichier est en lecture seule
+            if not os.access(chemin_fichier, os.W_OK):
+                # Essayer de rendre le fichier modifiable temporairement
+                try:
+                    os.chmod(chemin_fichier, stat.S_IWRITE | stat.S_IREAD)
+                except PermissionError:
+                    raise PermissionError_Custom(f"Fichier en lecture seule et impossible à modifier: {chemin_fichier}")
+            
+            return True
+            
+        except (OSError, IOError) as e:
+            logger.error(f"Erreur de permissions sur {chemin_fichier}: {e}")
+            raise PermissionError_Custom(f"Erreur de permissions sur {chemin_fichier}: {e}")
+    
+    def verifier_espace_disque(self, chemin: str, taille_requise: int) -> bool:
+        """
+        Vérifie s'il y a suffisamment d'espace disque
+        :param chemin: Chemin du répertoire
+        :param taille_requise: Taille requise en octets
+        :return: True si l'espace est suffisant
+        """
+        try:
+            stat_disque = shutil.disk_usage(chemin)
+            espace_libre = stat_disque.free
+            
+            if espace_libre < taille_requise * 1.1:  # 10% de marge
+                raise EspaceDisqueError(f"Espace disque insuffisant. Requis: {taille_requise}, Disponible: {espace_libre}")
+            
+            return True
+            
+        except OSError as e:
+            logger.error(f"Erreur lors de la vérification de l'espace disque: {e}")
+            raise EspaceDisqueError(f"Impossible de vérifier l'espace disque: {e}")
+    
+    def creer_dossier_securise(self, chemin_dossier: str) -> bool:
+        """
+        Crée un dossier de manière sécurisée avec gestion d'erreurs
+        :param chemin_dossier: Chemin du dossier à créer
+        :return: True si succès
+        """
+        try:
+            if not os.path.exists(chemin_dossier):
+                os.makedirs(chemin_dossier, exist_ok=True)
+                # Ajouter à la liste des opérations pour rollback
+                self.operations_realisees.append(("create_dir", chemin_dossier))
+                logger.info(f"Dossier créé: {chemin_dossier}")
+            return True
+            
+        except PermissionError as e:
+            logger.error(f"Permission refusée pour créer {chemin_dossier}: {e}")
+            raise PermissionError_Custom(f"Permission refusée pour créer le dossier {chemin_dossier}")
+        except OSError as e:
+            logger.error(f"Erreur système lors de la création de {chemin_dossier}: {e}")
+            raise TrieurError(f"Impossible de créer le dossier {chemin_dossier}: {e}")
+    
+    def deplacer_fichier_securise(self, source: str, destination: str) -> bool:
+        """
+        Déplace un fichier de manière sécurisée avec gestion d'erreurs complète
+        :param source: Chemin source
+        :param destination: Chemin destination
+        :return: True si succès
+        """
+        try:
+            # Vérifications préalables
+            if not os.path.exists(source):
+                raise FileNotFoundError(f"Fichier source introuvable: {source}")
+            
+            # Vérifier les permissions
+            self.verifier_permissions_fichier(source)
+            
+            # Vérifier l'espace disque
+            taille_fichier = os.path.getsize(source)
+            self.verifier_espace_disque(os.path.dirname(destination), taille_fichier)
+            
+            # Créer le dossier de destination
+            self.creer_dossier_securise(os.path.dirname(destination))
+            
+            # Effectuer le déplacement
+            shutil.move(source, destination)
+            
+            # Enregistrer l'opération pour rollback
+            self.operations_realisees.append(("move_file", source, destination))
+            logger.info(f"Fichier déplacé: {source} -> {destination}")
+            
+            return True
+            
+        except FileNotFoundError as e:
+            logger.error(f"Fichier introuvable: {e}")
+            raise
+        except PermissionError_Custom as e:
+            logger.error(f"Erreur de permissions: {e}")
+            raise
+        except EspaceDisqueError as e:
+            logger.error(f"Erreur d'espace disque: {e}")
+            raise
+        except shutil.Error as e:
+            logger.error(f"Erreur lors du déplacement: {e}")
+            raise TrieurError(f"Erreur lors du déplacement de {source} vers {destination}: {e}")
+        except OSError as e:
+            logger.error(f"Erreur système: {e}")
+            raise TrieurError(f"Erreur système lors du déplacement: {e}")
+    
+    def effectuer_rollback(self) -> List[str]:
+        """
+        Effectue un rollback des opérations réalisées en cas d'erreur
+        :return: Liste des erreurs rencontrées pendant le rollback
+        """
+        erreurs_rollback = []
+        logger.info(f"Début du rollback de {len(self.operations_realisees)} opérations")
+        
+        # Inverser l'ordre des opérations
+        operations_inverses = reversed(self.operations_realisees)
+        
+        for operation in operations_inverses:
+            try:
+                if operation[0] == "move_file":
+                    source, destination = operation[1], operation[2]
+                    if os.path.exists(destination):
+                        shutil.move(destination, source)
+                        logger.info(f"Rollback: fichier restauré {destination} -> {source}")
+                        
+                elif operation[0] == "create_dir":
+                    dossier = operation[1]
+                    if os.path.exists(dossier) and not os.listdir(dossier):
+                        os.rmdir(dossier)
+                        logger.info(f"Rollback: dossier supprimé {dossier}")
+                        
+            except Exception as e:
+                erreur_msg = f"Erreur lors du rollback de l'opération {operation}: {e}"
+                logger.error(erreur_msg)
+                erreurs_rollback.append(erreur_msg)
+        
+        self.operations_realisees.clear()
+        return erreurs_rollback
 
     def obtenir_type_fichier(self, fichier: str) -> str:
         """
@@ -90,36 +264,51 @@ class TrieurFichiers:
         """
         chemin_complet = os.path.join(self.dossier_source, fichier)
         
-        if not os.path.isfile(chemin_complet):
+        try:
+            if not os.path.isfile(chemin_complet):
+                logger.warning(f"Fichier inexistant: {chemin_complet}")
+                return None
+                
+            type_tri = self.config.get("type_tri", "type")
+            
+            if type_tri == "type":
+                type_fichier = self.obtenir_type_fichier(fichier)
+                dossier_destination = os.path.join(self.dossier_source, type_fichier)
+                
+                # Création de sous-dossiers par extension si activé
+                if self.config.get("sous_dossiers_par_extension", True):
+                    _, extension = os.path.splitext(fichier.lower())
+                    extension = extension[1:]  # Supprimer le point
+                    if extension:
+                        dossier_destination = os.path.join(dossier_destination, extension)
+            
+            elif type_tri == "date":
+                try:
+                    date_modif = os.path.getmtime(chemin_complet)
+                    categorie_date = self.obtenir_categorie_date(date_modif)
+                    dossier_destination = os.path.join(self.dossier_source, "Par Date", categorie_date)
+                except OSError as e:
+                    logger.error(f"Impossible d'obtenir la date de modification de {fichier}: {e}")
+                    return None
+            
+            elif type_tri == "taille":
+                try:
+                    taille = os.path.getsize(chemin_complet)
+                    categorie_taille = self.obtenir_categorie_taille(taille)
+                    dossier_destination = os.path.join(self.dossier_source, "Par Taille", categorie_taille)
+                except OSError as e:
+                    logger.error(f"Impossible d'obtenir la taille de {fichier}: {e}")
+                    return None
+            
+            else:
+                logger.error(f"Type de tri invalide: {type_tri}")
+                return None
+                
+            return dossier_destination
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la détermination du dossier de destination pour {fichier}: {e}")
             return None
-            
-        type_tri = self.config.get("type_tri", "type")
-        
-        if type_tri == "type":
-            type_fichier = self.obtenir_type_fichier(fichier)
-            dossier_destination = os.path.join(self.dossier_source, type_fichier)
-            
-            # Création de sous-dossiers par extension si activé
-            if self.config.get("sous_dossiers_par_extension", True):
-                _, extension = os.path.splitext(fichier.lower())
-                extension = extension[1:]  # Supprimer le point
-                if extension:
-                    dossier_destination = os.path.join(dossier_destination, extension)
-        
-        elif type_tri == "date":
-            date_modif = os.path.getmtime(chemin_complet)
-            categorie_date = self.obtenir_categorie_date(date_modif)
-            dossier_destination = os.path.join(self.dossier_source, "Par Date", categorie_date)
-        
-        elif type_tri == "taille":
-            taille = os.path.getsize(chemin_complet)
-            categorie_taille = self.obtenir_categorie_taille(taille)
-            dossier_destination = os.path.join(self.dossier_source, "Par Taille", categorie_taille)
-        
-        else:
-            return None
-            
-        return dossier_destination
 
     def sauvegarder_emplacement_original(self, fichier: str, chemin_destination: str):
         """
@@ -133,68 +322,127 @@ class TrieurFichiers:
 
     def trier_fichiers(self, callback=None) -> Tuple[int, List[str]]:
         """
-        Trie les fichiers selon le mode spécifié
+        Trie les fichiers selon le mode spécifié avec gestion d'erreurs améliorée
         :param callback: Fonction de rappel pour mettre à jour la progression
         :return: Tuple (nombre de fichiers traités, liste des erreurs)
         """
+        logger.info(f"Début du tri des fichiers dans {self.dossier_source}")
+        
+        # Vérifications préalables
         if not self.dossier_source or not os.path.isdir(self.dossier_source):
-            return 0, ["Dossier source invalide"]
+            error_msg = "Dossier source invalide ou inexistant"
+            logger.error(error_msg)
+            return 0, [error_msg]
             
-        fichiers = [f for f in os.listdir(self.dossier_source) 
-                   if os.path.isfile(os.path.join(self.dossier_source, f))]
+        try:
+            fichiers = [f for f in os.listdir(self.dossier_source) 
+                       if os.path.isfile(os.path.join(self.dossier_source, f))]
+        except PermissionError as e:
+            error_msg = f"Permission refusée pour lire le dossier source: {e}"
+            logger.error(error_msg)
+            return 0, [error_msg]
+        except OSError as e:
+            error_msg = f"Erreur d'accès au dossier source: {e}"
+            logger.error(error_msg)
+            return 0, [error_msg]
         
         if not fichiers:
-            return 0, ["Aucun fichier trouvé dans le dossier"]
+            msg = "Aucun fichier trouvé dans le dossier"
+            logger.warning(msg)
+            return 0, [msg]
             
-        self.sauvegarde = {}  # Réinitialiser la sauvegarde
+        # Réinitialiser les variables
+        self.sauvegarde = {}
+        self.operations_realisees = []
         erreurs = []
         fichiers_traites = 0
         
         # Créer un fichier de sauvegarde avant de commencer
         sauvegarde_path = os.path.join(self.dossier_source, ".trieur_sauvegarde.json")
         
-        for i, fichier in enumerate(fichiers):
-            try:
-                # Ignorer les fichiers cachés et le fichier de sauvegarde
-                if fichier.startswith('.') or fichier == ".trieur_sauvegarde.json":
+        try:
+            for i, fichier in enumerate(fichiers):
+                try:
+                    # Ignorer les fichiers cachés et le fichier de sauvegarde
+                    if fichier.startswith('.') or fichier == ".trieur_sauvegarde.json":
+                        continue
+                        
+                    chemin_source = os.path.join(self.dossier_source, fichier)
+                    
+                    # Déterminer le dossier de destination
+                    dossier_destination = self.creer_dossier_destination(fichier)
+                    if not dossier_destination:
+                        continue
+                    
+                    chemin_destination = os.path.join(dossier_destination, fichier)
+                    
+                    # Gérer les doublons avec timestamp plus précis
+                    if os.path.exists(chemin_destination):
+                        base, extension = os.path.splitext(fichier)
+                        timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3]
+                        nouveau_nom = f"{base}_{timestamp}{extension}"
+                        chemin_destination = os.path.join(dossier_destination, nouveau_nom)
+                    
+                    # Sauvegarder l'emplacement original pour restauration
+                    nom_final = os.path.basename(chemin_destination)
+                    self.sauvegarder_emplacement_original(nom_final, dossier_destination)
+                    
+                    # Déplacer le fichier avec la méthode sécurisée
+                    self.deplacer_fichier_securise(chemin_source, chemin_destination)
+                    fichiers_traites += 1
+                    
+                    # Mise à jour de la progression
+                    if callback:
+                        callback(i + 1, len(fichiers))
+                        
+                except (PermissionError_Custom, EspaceDisqueError, TrieurError) as e:
+                    error_msg = f"Erreur critique avec {fichier}: {str(e)}"
+                    logger.error(error_msg)
+                    erreurs.append(error_msg)
+                    
+                    # En cas d'erreur critique, effectuer un rollback
+                    rollback_errors = self.effectuer_rollback()
+                    if rollback_errors:
+                        erreurs.extend([f"Erreur de rollback: {err}" for err in rollback_errors])
+                    
+                    break  # Arrêter le traitement en cas d'erreur critique
+                    
+                except FileNotFoundError as e:
+                    error_msg = f"Fichier {fichier} introuvable: {str(e)}"
+                    logger.warning(error_msg)
+                    erreurs.append(error_msg)
                     continue
                     
-                dossier_destination = self.creer_dossier_destination(fichier)
-                
-                if not dossier_destination:
+                except Exception as e:
+                    error_msg = f"Erreur inattendue avec {fichier}: {str(e)}"
+                    logger.error(error_msg)
+                    erreurs.append(error_msg)
                     continue
-                    
-                # Créer le dossier de destination s'il n'existe pas
-                os.makedirs(dossier_destination, exist_ok=True)
-                
-                chemin_source = os.path.join(self.dossier_source, fichier)
-                chemin_destination = os.path.join(dossier_destination, fichier)
-                
-                # Gérer les doublons
-                if os.path.exists(chemin_destination):
-                    base, extension = os.path.splitext(fichier)
-                    nouveau_nom = f"{base}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{extension}"
-                    chemin_destination = os.path.join(dossier_destination, nouveau_nom)
-                
-                # Sauvegarder l'emplacement original
-                self.sauvegarder_emplacement_original(fichier, dossier_destination)
-                
-                # Déplacer le fichier
-                shutil.move(chemin_source, chemin_destination)
-                fichiers_traites += 1
-                
-                # Mise à jour de la progression
-                if callback:
-                    callback(i + 1, len(fichiers))
-                    
-            except Exception as e:
-                erreurs.append(f"Erreur avec {fichier}: {str(e)}")
-        
-        # Enregistrer la sauvegarde une fois le tri terminé
-        with open(sauvegarde_path, 'w') as f:
-            json.dump(self.sauvegarde, f)
             
-        return fichiers_traites, erreurs
+            # Enregistrer la sauvegarde seulement si des fichiers ont été traités
+            if fichiers_traites > 0:
+                try:
+                    with open(sauvegarde_path, 'w', encoding='utf-8') as f:
+                        json.dump(self.sauvegarde, f, ensure_ascii=False, indent=2)
+                    logger.info(f"Sauvegarde créée: {sauvegarde_path}")
+                except Exception as e:
+                    error_msg = f"Impossible de créer la sauvegarde: {str(e)}"
+                    logger.error(error_msg)
+                    erreurs.append(error_msg)
+            
+            logger.info(f"Tri terminé: {fichiers_traites} fichiers traités, {len(erreurs)} erreurs")
+            return fichiers_traites, erreurs
+            
+        except Exception as e:
+            error_msg = f"Erreur fatale pendant le tri: {str(e)}"
+            logger.critical(error_msg)
+            
+            # Effectuer un rollback complet
+            rollback_errors = self.effectuer_rollback()
+            if rollback_errors:
+                erreurs.extend([f"Erreur de rollback: {err}" for err in rollback_errors])
+            
+            return 0, [error_msg] + erreurs
 
     def restaurer_fichiers(self, callback=None) -> Tuple[int, List[str]]:
         """
@@ -808,19 +1056,44 @@ class ApplicationTrieurFichiers(ctk.CTk):
                     callback=self.maj_progression
                 )
                 
-                # Afficher les résultats
-                self.ajouter_log(f"\nTri terminé!\n {fichiers_traites} fichiers traités.")
-                
-                if erreurs:
-                    self.ajouter_log("\nErreurs rencontrées:")
-                    for erreur in erreurs:
-                        self.ajouter_log(f"- {erreur}")
+                # Afficher les résultats avec plus de détails
+                if fichiers_traites > 0:
+                    self.ajouter_log(f"\n✅ Tri terminé avec succès!")
+                    self.ajouter_log(f"📁 {fichiers_traites} fichiers traités et organisés.")
+                    
+                    if erreurs:
+                        self.ajouter_log(f"\n⚠️  {len(erreurs)} avertissements/erreurs mineures:")
+                        for i, erreur in enumerate(erreurs, 1):
+                            self.ajouter_log(f"   {i}. {erreur}")
+                        self.ajouter_log("\n💡 Conseil: Vérifiez les permissions des fichiers problématiques.")
+                else:
+                    self.ajouter_log(f"\n❌ Aucun fichier n'a pu être traité.")
+                    if erreurs:
+                        self.ajouter_log(f"\n🚨 Erreurs critiques rencontrées:")
+                        for i, erreur in enumerate(erreurs, 1):
+                            # Analyser le type d'erreur pour donner des conseils
+                            if "Permission" in erreur:
+                                self.ajouter_log(f"   {i}. {erreur}")
+                                self.ajouter_log(f"      💡 Solution: Exécutez le programme en tant qu'administrateur")
+                            elif "Espace disque" in erreur:
+                                self.ajouter_log(f"   {i}. {erreur}")
+                                self.ajouter_log(f"      💡 Solution: Libérez de l'espace disque sur votre système")
+                            elif "lecture seule" in erreur:
+                                self.ajouter_log(f"   {i}. {erreur}")
+                                self.ajouter_log(f"      💡 Solution: Modifiez les propriétés du fichier pour le rendre modifiable")
+                            else:
+                                self.ajouter_log(f"   {i}. {erreur}")
                 
                 # Mettre à jour l'interface
                 self.after(100, self.mise_a_jour_interface)
                 
             except Exception as e:
-                self.ajouter_log(f"\nErreur lors du tri: {str(e)}")
+                self.ajouter_log(f"\n💥 Erreur critique lors du tri:")
+                self.ajouter_log(f"   {str(e)}")
+                self.ajouter_log(f"\n🛠️  Actions recommandées:")
+                self.ajouter_log(f"   1. Vérifiez que le dossier source existe encore")
+                self.ajouter_log(f"   2. Assurez-vous d'avoir les permissions nécessaires")
+                self.ajouter_log(f"   3. Redémarrez l'application si le problème persiste")
             finally:
                 # Réactiver les boutons
                 self.btn_trier.configure(state="normal")
@@ -868,19 +1141,37 @@ class ApplicationTrieurFichiers(ctk.CTk):
                     callback=self.maj_progression
                 )
                 
-                # Afficher les résultats
-                self.ajouter_log(f"\nRestauration terminée!\n {fichiers_restaures} fichiers restaurés.")
-                
-                if erreurs:
-                    self.ajouter_log("\nErreurs rencontrées:")
-                    for erreur in erreurs:
-                        self.ajouter_log(f"- {erreur}")
+                # Afficher les résultats avec plus de détails
+                if fichiers_restaures > 0:
+                    self.ajouter_log(f"\n🔄 Restauration terminée avec succès!")
+                    self.ajouter_log(f"📂 {fichiers_restaures} fichiers restaurés à leur emplacement d'origine.")
+                    self.ajouter_log(f"🗑️  Dossiers de tri supprimés automatiquement.")
+                    
+                    if erreurs:
+                        self.ajouter_log(f"\n⚠️  {len(erreurs)} avertissements lors de la restauration:")
+                        for i, erreur in enumerate(erreurs, 1):
+                            self.ajouter_log(f"   {i}. {erreur}")
+                else:
+                    self.ajouter_log(f"\n❌ Aucun fichier n'a pu être restauré.")
+                    if erreurs:
+                        self.ajouter_log(f"\n🚨 Erreurs critiques:")
+                        for i, erreur in enumerate(erreurs, 1):
+                            self.ajouter_log(f"   {i}. {erreur}")
+                        self.ajouter_log(f"\n💡 Vérifiez que:")
+                        self.ajouter_log(f"   • Le fichier de sauvegarde n'a pas été supprimé")
+                        self.ajouter_log(f"   • Les fichiers triés n'ont pas été déplacés manuellement")
+                        self.ajouter_log(f"   • Vous avez les permissions nécessaires")
                 
                 # Mettre à jour l'interface
                 self.after(100, self.mise_a_jour_interface)
                 
             except Exception as e:
-                self.ajouter_log(f"\nErreur lors de la restauration: {str(e)}")
+                self.ajouter_log(f"\n💥 Erreur critique lors de la restauration:")
+                self.ajouter_log(f"   {str(e)}")
+                self.ajouter_log(f"\n🛠️  Actions recommandées:")
+                self.ajouter_log(f"   1. Vérifiez l'intégrité du dossier source")
+                self.ajouter_log(f"   2. Assurez-vous que les fichiers n'ont pas été modifiés")
+                self.ajouter_log(f"   3. Contactez le support si le problème persiste")
             finally:
                 # Réactiver les boutons
                 self.btn_trier.configure(state="normal")
